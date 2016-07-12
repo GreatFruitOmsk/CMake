@@ -370,6 +370,10 @@ set(SRCS
   cm_sha2.c
   cm_utf8.h
   cm_utf8.c
+  cm_tool_util.c
+  cm_tool_util.h
+  cm_tool_sleep.c
+  cm_tool_sleep.h
   )
 
 set(COMMAND_INCLUDES "#include \"cmTargetPropCommandBase.cxx\"\n")
