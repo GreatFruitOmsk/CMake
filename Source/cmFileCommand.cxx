@@ -41,6 +41,9 @@
 #include <cmsys/RegularExpression.hxx>
 #include <cmsys/auto_ptr.hxx>
 
+#include "cm_tool_sleep.h"
+#include "cm_tool_util.h"
+
 // Table of permissions flags.
 #if defined(_WIN32) && !defined(__CYGWIN__)
 static mode_t mode_owner_read = S_IREAD;
@@ -2472,6 +2475,17 @@ bool cmFileCommand::HandleDownloadCommand(std::vector<std::string> const& args)
 
   long timeout = 0;
   long inactivity_timeout = 0;
+  
+/* by George */
+  struct {
+    long retry_num = 1;
+    long retry_delay = 0;
+    long retry_max_time = 10000;
+    long resume_from = 0;
+    bool use_resume = false;
+  } d_args;
+/* --------  */
+  
   std::string logVar;
   std::string statusVar;
   bool tls_verify = this->Makefile->IsOn("CMAKE_TLS_VERIFY");
@@ -2490,6 +2504,41 @@ bool cmFileCommand::HandleDownloadCommand(std::vector<std::string> const& args)
         this->SetError("DOWNLOAD missing time for TIMEOUT.");
         return false;
       }
+/* by George */
+    } else if (*i == "RETRY") {
+      ++i;
+      if (i != args.end()) {
+        d_args.retry_num = atol(i->c_str());
+      } else {
+        this->SetError("DOWNLOAD missing number of retries for RETRY.");
+        return false;
+      }
+    } else if (*i == "RETRY_DELAY") {
+      ++i;
+      if (i != args.end()) {
+        d_args.retry_delay = atol(i->c_str());
+      } else {
+        this->SetError("DOWNLOAD missing time for RETRY_DELAY.");
+        return false;
+      }
+    } else if (*i == "RETRY_MAX_TIME") {
+      ++i;
+      if (i != args.end()) {
+        d_args.retry_max_time = atol(i->c_str());
+      } else {
+        this->SetError("DOWNLOAD missing time for RETRY_MAX_TIME.");
+        return false;
+      }
+    } else if (*i == "CONTINUE_AT") {
+      ++i;
+      d_args.use_resume = true;
+      if (i != args.end()) {
+        d_args.resume_from = atol(i->c_str());
+      } else {
+        this->SetError("DOWNLOAD missing offset value for CONTINUE_AT.");
+        return false;
+      }
+/* --------- */
     } else if (*i == "INACTIVITY_TIMEOUT") {
       ++i;
       if (i != args.end()) {
@@ -2697,8 +2746,48 @@ bool cmFileCommand::HandleDownloadCommand(std::vector<std::string> const& args)
     check_curl_result(res, "DOWNLOAD cannot set progress data: ");
   }
 
-  res = ::curl_easy_perform(curl);
+  /* by George */
+  
+  if (d_args.use_resume) {
+    res = ::curl_easy_setopt(curl, CURLOPT_RESUME_FROM_LARGE, d_args.resume_from);
+    check_curl_result(res, "DOWNLOAD cannot set resume from offset: ");
+  }
+  
+  /* --------- */
+  
+  // Here goes the magic!!!
+  timeval start_time = tool_tvnow();
 
+  printf("retry_num %ld\n", d_args.retry_num);
+  printf("use_resume %d\n", d_args.use_resume);
+  printf("retry_delay %ld\n", d_args.retry_delay);
+  printf("resume_from %ld\n", d_args.resume_from);
+  printf("retry_max_time %ld\n", d_args.retry_max_time);
+  
+  
+  for(int y = 0; y < d_args.retry_num; y++) {
+    printf("RUN %d\n", y);
+    
+    res = ::curl_easy_perform(curl);
+    if (res != CURLE_OK)
+    {
+        printf("RES is %s\n", curl_easy_strerror(res));
+    /* something shit happened */
+        tool_go_sleep(d_args.retry_delay);
+        if (tool_tvdiff(tool_tvnow(), start_time) > d_args.retry_max_time)
+        {
+            /* go out with error flag*/
+            break;
+            //continue;
+        }
+    }
+    else /* CURLE_OK */
+    {
+      printf("CURLE_OK\n");
+      break;
+    }
+  }
+  
   /* always cleanup */
   g_curl.release();
   ::curl_easy_cleanup(curl);
